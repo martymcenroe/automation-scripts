@@ -4,6 +4,22 @@ Collection of utility scripts for personal workflow automation, gaming analysis,
 
 ## Repository Management
 
+# Repository Management
+
+### check_links.py
+
+A CLI-based link validator. When run, this script finds all URLs in a `README.md` file located in the **current working directory** (not the script's directory).
+
+It then issues HTTP HEAD requests to validate each link, providing a console report of any broken (e.g., 404), forbidden (e.g., 403), or timed-out links. It uses only standard Python libraries and requires no external packages.
+
+**Usage:**
+```bash
+# Run from a project directory to check its README.md
+python ../automation-scripts/check_links.py
+```
+
+**Requirements:** Python 3.x
+
 ### license_audit.py
 Automated LICENSE file management for GitHub repositories. Scans all non-forked repositories in ~/Projects directory, identifies repos missing a LICENSE file, and automatically creates pull requests to add the MIT LICENSE. The script creates a feature branch, commits the LICENSE file, pushes to remote, creates a PR, auto-merges, and cleans up the branch. Supports `--dry-run` flag to preview changes without execution.
 
