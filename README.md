@@ -7,6 +7,17 @@ Collection of utility scripts for personal workflow automation, gaming analysis,
 # Repository Management
 
 
+### add_sponsorship.py
+Automates the addition of GitHub Sponsorship to any repository. Creates the .github/FUNDING.yml file, creates a feature branch, commits, pushes, and auto-merges a PR to enable the Sponsor button.
+
+**Usage:**
+@@@bash
+# Run from the root of the target repository
+python ~/Projects/automation-scripts/add_sponsorship.py
+@@@
+
+**Requirements:** GitHub CLI (gh), git, Python 3.x
+
 ### license_audit.py
 Automated LICENSE file management for GitHub repositories. Scans all non-forked repositories in ~/Projects directory, identifies repos missing a LICENSE file, and automatically creates pull requests to add the MIT LICENSE. The script creates a feature branch, commits the LICENSE file, pushes to remote, creates a PR, auto-merges, and cleans up the branch. Supports `--dry-run` flag to preview changes without execution.
 
