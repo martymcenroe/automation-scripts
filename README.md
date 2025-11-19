@@ -18,6 +18,20 @@ python ~/Projects/automation-scripts/add_sponsorship.py
 
 **Requirements:** GitHub CLI (gh), git, Python 3.x
 
+### toggle_visibility.py
+Bulk toggles the visibility (public/private) of repositories. Wraps the GitHub CLI to safely modify single repos or lists of repos, with a safety confirmation prompt. Useful for rapidly curating your public profile.
+
+**Usage:**
+```bash
+# Make repos private
+python toggle_visibility.py repo1 repo2 --private
+
+# Make repos public
+python toggle_visibility.py repo1 --public
+```
+
+**Requirements:** GitHub CLI (gh), Python 3.x
+
 ### license_audit.py
 Automated LICENSE file management for GitHub repositories. Scans all non-forked repositories in ~/Projects directory, identifies repos missing a LICENSE file, and automatically creates pull requests to add the MIT LICENSE. The script creates a feature branch, commits the LICENSE file, pushes to remote, creates a PR, auto-merges, and cleans up the branch. Supports `--dry-run` flag to preview changes without execution.
 
@@ -31,6 +45,20 @@ python license_audit.py
 ```
 
 **Requirements:** GitHub CLI (gh), git, Python 3.x
+
+### toggle_visibility.py
+Bulk toggles the visibility (public/private) of repositories. Wraps the GitHub CLI to safely modify single repos or lists of repos, with a safety confirmation prompt. Useful for rapidly curating your public profile.
+
+**Usage:**
+```bash
+# Make repos private
+python toggle_visibility.py repo1 repo2 --private
+
+# Make repos public
+python toggle_visibility.py repo1 --public
+```
+
+**Requirements:** GitHub CLI (gh), Python 3.x
 
 ---
 
