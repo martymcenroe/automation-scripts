@@ -5,7 +5,8 @@ import argparse
 def run_gh_command(repo_name, visibility):
     """Wraps the gh repo edit command."""
     print(f"Processing: {repo_name} -> {visibility}")
-    command = f"gh repo edit {repo_name} --visibility {visibility}"
+    # Added --accept-visibility-change-consequences to bypass the safety prompt
+    command = f"gh repo edit {repo_name} --visibility {visibility} --accept-visibility-change-consequences"
     
     try:
         # We run without 'check=True' first to catch specific gh errors gracefully
