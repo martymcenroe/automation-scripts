@@ -11,10 +11,10 @@ Collection of utility scripts for personal workflow automation, gaming analysis,
 Automates the addition of GitHub Sponsorship to any repository. Creates the .github/FUNDING.yml file, creates a feature branch, commits, pushes, and auto-merges a PR to enable the Sponsor button.
 
 **Usage:**
-@@@bash
+```bash
 # Run from the root of the target repository
 python ~/Projects/automation-scripts/add_sponsorship.py
-@@@
+```
 
 **Requirements:** GitHub CLI (gh), git, Python 3.x
 
