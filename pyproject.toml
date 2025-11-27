@@ -5,9 +5,16 @@ description = "Collection of automation scripts"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "tzdata (>=2025.2,<2026.0)"
+    # Time zone utilities
+    "tzdata (>=2025.2,<2026.0)",
+    # Web archiving scripts (extract_urls_from_brave.py, save_urls_as_clean_pdfs.py)
+    "trafilatura (>=1.9.0,<2.0.0)",
+    "weasyprint (>=61.0,<62.0.0)"
 ]
 
+
+[tool.poetry]
+package-mode = false
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

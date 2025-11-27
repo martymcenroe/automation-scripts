@@ -2,10 +2,10 @@
 
 Collection of utility scripts for personal workflow automation, gaming analysis, and development operations.
 
+This repository uses Poetry for dependency management. After cloning, run `poetry install` once, then invoke scripts with `poetry run python ...` so they run inside the project virtual environment.
+
+
 ## Repository Management
-
-# Repository Management
-
 
 ### add_sponsorship.py
 Automates the addition of GitHub Sponsorship to any repository. Creates the .github/FUNDING.yml file, creates a feature branch, commits, pushes, and auto-merges a PR to enable the Sponsor button.
@@ -85,6 +85,39 @@ PDF manipulation tool for extracting, removing, or reordering pages from PDF doc
 
 ---
 
+## Web Archiving
+
+### extract_urls_from_brave.py
+Extracts all URLs from a specific Brave bookmarks folder. Reads a copied Brave `Bookmarks` JSON file, searches for the named folder, and writes one URL per line to `local/brave/urls.txt`. Intended as the first step in a bookmarks-to-PDF pipeline.
+
+**Usage:**
+```bash
+# From the repo root, after copying your Brave Bookmarks file to local/brave/Bookmarks
+python extract_urls_from_brave.py
+```
+
+**Notes:**
+- Edit the `TARGET_FOLDER_NAME` constant in the script to match the name of your Brave bookmarks folder.
+- Output is written to `local/brave/urls.txt`.
+
+**Requirements:** Python 3.x
+
+### save_urls_as_clean_pdfs.py
+Converts each URL in `local/brave/urls.txt` into a simplified, reader-mode PDF. Fetches each page, extracts the main article content, and writes PDFs to `local/brave/pdfs/`. Designed to archive the substantive content of saved pages without ads or navigation chrome.
+
+**Usage:**
+```bash
+# From the repo root, after running extract_urls_from_brave.py
+python save_urls_as_clean_pdfs.py
+```
+
+**Output:**
+- Simplified PDFs saved under `local/brave/pdfs/`.
+
+**Requirements:** Python 3.x, `trafilatura`, `weasyprint`
+
+---
+
 ## Development Status
 
 Scripts marked with `*` are executable. Some tools are in active development with additional features planned.
@@ -92,4 +125,3 @@ Scripts marked with `*` are executable. Some tools are in active development wit
 ## License
 
 All scripts in this repository are licensed under the MIT License. See LICENSE file for details.
-EOF
