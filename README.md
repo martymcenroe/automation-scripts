@@ -62,6 +62,17 @@ python toggle_visibility.py repo1 --public
 
 ---
 
+### git_sync_audit.sh
+A comprehensive dashboard for syncing Git repositories across the machine. Audits `~/dotfiles` and all repositories in `~/Projects`, providing a "Traffic Light" status report (Clean, Dirty, Ahead, Diverged). Auto-fast-forwards clean repos and skips dirty ones to prevent data loss.
+
+**Usage:**
+```bash
+./git_sync_audit.sh
+```
+
+**Requirements:** Bash, git
+
+
 ## Gaming & Analysis Tools
 
 ### get_battle_star_collection
