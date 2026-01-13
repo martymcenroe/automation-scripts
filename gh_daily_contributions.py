@@ -24,8 +24,13 @@ def get_contributions_today(username: str, timezone: str = "America/Chicago") ->
     tz = ZoneInfo(timezone)
     today = datetime.now(tz).date()
     from_date = today.isoformat()
-    to_date = today.isoformat()
-    
+
+    # Calculate UTC times that correspond to the start/end of day in local timezone
+    local_start = datetime(today.year, today.month, today.day, 0, 0, 0, tzinfo=tz)
+    local_end = datetime(today.year, today.month, today.day, 23, 59, 59, tzinfo=tz)
+    utc_start = local_start.astimezone(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%SZ")
+    utc_end = local_end.astimezone(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%SZ")
+
     # GraphQL query for contribution calendar
     query = """
     query($username: String!, $from: DateTime!, $to: DateTime!) {
@@ -49,12 +54,12 @@ def get_contributions_today(username: str, timezone: str = "America/Chicago") ->
       }
     }
     """
-    
-    # Prepare variables - GitHub API expects RFC3339 format with time
+
+    # Prepare variables - use UTC times that correspond to local day boundaries
     variables = {
         "username": username,
-        "from": f"{from_date}T00:00:00Z",
-        "to": f"{from_date}T23:59:59Z"
+        "from": utc_start,
+        "to": utc_end
     }
     
     # Execute query using gh CLI
