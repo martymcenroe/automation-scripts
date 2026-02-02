@@ -135,4 +135,4 @@ Scripts marked with `*` are executable. Some tools are in active development wit
 
 ## License
 
-All scripts in this repository are licensed under the MIT License. See LICENSE file for details.
+All scripts in this repository are licensed under the PolyForm Noncommercial 1.0.0. See LICENSE file for details.
