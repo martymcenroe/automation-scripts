@@ -9,7 +9,7 @@ A probability calculator for the dice game "Can't Stop". It simulates 1,000,000 
 ## Usage
 Run the simulation:
 ```bash
-python probs_for_cant_stop
+python tools/probs_for_cant_stop
 ```
 
 ## Logic

@@ -11,7 +11,7 @@ Batch converts `.mp4` video files to high-quality `.mp3` audio files. It also em
 1. Navigate to the directory containing the `.mp4` files.
 2. Execute the script:
    ```bash
-   zsh path/to/convert-to-mp3
+   zsh tools/path/to/convert-to-mp3
    ```
 
 ## Details

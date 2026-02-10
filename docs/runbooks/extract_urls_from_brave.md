@@ -18,6 +18,6 @@ Extracts URLs from a specific Brave bookmarks folder. This is the first step in 
    ```
 2. Run the script:
    ```bash
-   python extract_urls_from_brave.py
+   python tools/extract_urls_from_brave.py
    ```
 3. Extracted URLs will be written to `local/brave/urls.txt`.

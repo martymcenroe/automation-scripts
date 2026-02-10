@@ -10,7 +10,7 @@ A dashboard for syncing Git repositories across the machine. It audits `~/dotfil
 ## Usage
 Run the script from its location:
 ```bash
-./git_sync_audit.sh
+./tools/git_sync_audit.sh
 ```
 
 ## Status Meanings

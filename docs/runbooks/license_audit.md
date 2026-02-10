@@ -11,12 +11,12 @@ Scans all non-forked repositories in the `~/Projects` directory for missing `LIC
 ## Usage
 ### Dry Run (Preview Changes)
 ```bash
-python license_audit.py --dry-run
+python tools/license_audit.py --dry-run
 ```
 
 ### Execute (Create PRs)
 ```bash
-python license_audit.py
+python tools/license_audit.py
 ```
 
 ## Workflow

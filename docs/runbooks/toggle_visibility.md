@@ -10,12 +10,12 @@ Bulk toggles the visibility (public/private) of GitHub repositories. It uses the
 ## Usage
 ### Make repositories private
 ```bash
-python toggle_visibility.py repo1 repo2 --private
+python tools/toggle_visibility.py repo1 repo2 --private
 ```
 
 ### Make repositories public
 ```bash
-python toggle_visibility.py repo1 --public
+python tools/toggle_visibility.py repo1 --public
 ```
 
 ## Safety Features

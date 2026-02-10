@@ -10,7 +10,7 @@ Automates the downloading of Star Battle puzzle PDFs from krazydad.com. It speci
 ## Usage
 1. Execute the script:
    ```bash
-   python get_battle_star_collection
+   python tools/get_battle_star_collection
    ```
 2. The PDFs will be downloaded into a local folder named `star_battle_pdfs`.
 

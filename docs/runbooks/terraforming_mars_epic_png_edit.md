@@ -11,7 +11,7 @@ Image processing utility for Terraforming Mars game components. It adds a 50-pix
 1. Ensure your source images are in `~/Mars`.
 2. Run the script:
    ```bash
-   python terraforming_mars_epic_png_edit
+   python tools/terraforming_mars_epic_png_edit
    ```
 3. Modified images will be saved to `~/Mars_modified`.
 

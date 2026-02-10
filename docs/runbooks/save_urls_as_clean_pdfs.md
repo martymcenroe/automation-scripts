@@ -12,7 +12,7 @@ Converts a list of URLs into simplified, reader-mode PDFs. It archives the subst
 1. Ensure `local/brave/urls.txt` exists.
 2. Run the script:
    ```bash
-   python save_urls_as_clean_pdfs.py
+   python tools/save_urls_as_clean_pdfs.py
    ```
 3. PDFs will be saved to `local/brave/pdfs/`.
 

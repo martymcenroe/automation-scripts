@@ -11,7 +11,7 @@ Extracts pages from PDF documents. Specifically, it removes the 7th page from ev
 1. Place source PDFs in `~/programming/original_pdfs`.
 2. Run the script:
    ```bash
-   python pdf_page_stripper
+   python tools/pdf_page_stripper
    ```
 3. Modified PDFs will be saved in `~/programming/original_pdfs/modified_pdfs`.
 

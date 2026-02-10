@@ -11,7 +11,7 @@ Fetches the current day's GitHub contribution count using the GraphQL API. It ma
 ## Usage
 Run the script:
 ```bash
-python gh_daily_contributions.py
+python tools/gh_daily_contributions.py
 ```
 
 ## Details
