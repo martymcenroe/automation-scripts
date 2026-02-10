@@ -9,7 +9,7 @@ dependencies = [
     "tzdata (>=2025.2,<2026.0)",
     # Web archiving scripts (extract_urls_from_brave.py, save_urls_as_clean_pdfs.py)
     "trafilatura (>=1.9.0,<2.0.0)",
-    "weasyprint (>=61.0,<62.0.0)"
+    "weasyprint (>=68.1,<69.0)"
 ]
 
 
