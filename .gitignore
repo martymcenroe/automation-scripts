@@ -66,3 +66,6 @@ local-settings.*
 
 # Local Brave bookmarks and derived artifacts
 local/brave/
+
+# Unleashed session transcripts (auto-generated, untracked)
+data/unleashed/
