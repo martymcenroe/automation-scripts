@@ -16,6 +16,13 @@ dependencies = [
 [tool.poetry]
 package-mode = false
 
+[tool.poetry.group.dev.dependencies]
+# Pytest is the test runner invoked by tools/dependabot_review.py (in
+# AssemblyZero) as the test-must-pass gate. Without pytest in the venv,
+# the gate is vacuously inapplicable and every dependabot PR defers
+# forever. See issue #43.
+pytest = ">=8.0,<9.0"
+
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
