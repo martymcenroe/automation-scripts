@@ -20,8 +20,11 @@ package-mode = false
 # Pytest is the test runner invoked by tools/dependabot_review.py (in
 # AssemblyZero) as the test-must-pass gate. Without pytest in the venv,
 # the gate is vacuously inapplicable and every dependabot PR defers
-# forever. See issue #43.
-pytest = ">=8.0,<9.0"
+# forever. See issue #43. Bumped from <9.0 to <10.0 in #45 -- the
+# original constraint resolved to a pytest 8.4.x with an open
+# dependabot security alert (CVE fix in 9.0.3). Smoke tests use only
+# imports + a trivial Image.new call; well within pytest 9's stable API.
+pytest = ">=9.0,<10.0"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
