@@ -7,7 +7,9 @@ spoke from 0% to 1%.
 
 Outputs:
 1. All-time review count (search/issues, no time bound).
-2. Trailing-12-month contribution breakdown (matches the profile graph window).
+2. Trailing-12-month contribution breakdown -- matches the profile graph window.
+   Includes a cross-check against the widget's actual rendered data-percentages
+   so drift between this tool's math and GitHub's displayed value is visible.
 3. Last-30-day contribution rate (current pace).
 4. Projection to the 1%-spoke threshold under two models:
    - Steady-state: if last-30-day pace is sustained, eventual 12-month
@@ -15,17 +17,26 @@ Outputs:
    - Optimistic: days until (R + r*d) / (T + t*d) crosses 0.5%, treating
      the window as additive (ignoring sliding-window falloff).
 
+Denominator: contributionCalendar.totalContributions -- the all-types,
+all-restrictions count over the window. This matches what the GitHub widget
+uses; summing the four public spoke values understates the denominator by
+excluding private contributions (see automation-scripts#51 for the bug
+this corrected, and AssemblyZero runbook 0937 for the canonical math).
+
 Stdlib + gh CLI only. Mirrors gh_daily_contributions.py.
 
-Issue: martymcenroe/automation-scripts#49
+Issues: martymcenroe/automation-scripts#49 (original) + #51 (denominator fix)
 Parent: martymcenroe/AssemblyZero#1244
+Math reference: martymcenroe/AssemblyZero/docs/runbooks/0937-gh-cli-scripts.md
 """
 
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
+import urllib.request
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -33,6 +44,11 @@ TZ = ZoneInfo("America/Chicago")
 TIP_FRACTION = 0.005  # rounding boundary that flips the graph spoke from 0% to 1%
 WINDOW_DAYS = 365
 RECENT_DAYS = 30
+
+WIDGET_FRAGMENT_URL = (
+    "https://github.com/{user}"
+    "?action=show&controller=profiles&tab=contributions&user_id={user}"
+)
 
 GRAPHQL_QUERY = """
 query($username: String!, $from: DateTime!, $to: DateTime!) {
@@ -43,6 +59,10 @@ query($username: String!, $from: DateTime!, $to: DateTime!) {
       totalPullRequestContributions
       totalPullRequestReviewContributions
       totalRepositoryContributions
+      restrictedContributionsCount
+      contributionCalendar {
+        totalContributions
+      }
     }
   }
 }
@@ -85,13 +105,45 @@ def contributions_collection(username: str, frm: datetime, to: datetime) -> dict
     return data["data"]["user"]["contributionsCollection"]
 
 
-def graph_total(c: dict) -> int:
-    # The activity-overview graph normalizes across these four spokes only;
-    # repositories are reported by the API but not shown on the graph.
-    return (c["totalCommitContributions"]
-            + c["totalIssueContributions"]
-            + c["totalPullRequestContributions"]
-            + c["totalPullRequestReviewContributions"])
+def widget_denominator(c: dict) -> int:
+    """Match the GitHub activity-overview widget's denominator.
+
+    Uses contributionCalendar.totalContributions, the all-types
+    all-restrictions count over the window. The four-spoke public sum
+    (commits + issues + PRs + reviews) is NOT correct -- it excludes
+    private contributions and understates the denominator. See
+    automation-scripts#51 for the bug this corrected.
+    """
+    return c["contributionCalendar"]["totalContributions"]
+
+
+def fetch_widget_percentages(username: str) -> dict | None:
+    """Best-effort cross-check: fetch the rendered activity-overview fragment
+    and parse the data-percentages attribute. Returns None on any failure;
+    cross-check is informational, never fatal.
+    """
+    url = WIDGET_FRAGMENT_URL.format(user=username)
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "text/fragment+html, text/html",
+            "X-Requested-With": "XMLHttpRequest",
+            "User-Agent": "gh_review_projection/1.0",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            html = resp.read().decode("utf-8", errors="replace")
+    except Exception:
+        return None
+    m = re.search(r'data-percentages="([^"]+)"', html)
+    if not m:
+        return None
+    raw = m.group(1).replace("&quot;", '"')
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return None
 
 
 def project_optimistic_days(R: int, T: int, r: float, t: float) -> int | None:
@@ -123,14 +175,17 @@ def _section(title: str) -> None:
 
 
 def _print_breakdown(c: dict, denom_label: str) -> None:
-    total = graph_total(c)
+    total = widget_denominator(c)
+    restricted = c["restrictedContributionsCount"]
     reviews = c["totalPullRequestReviewContributions"]
     pct = 100 * reviews / total if total else 0
-    print(f"  commits:       {c['totalCommitContributions']:>5}")
-    print(f"  issues:        {c['totalIssueContributions']:>5}")
-    print(f"  pull requests: {c['totalPullRequestContributions']:>5}")
-    print(f"  code review:   {reviews:>5}  ({pct:.2f}% of {denom_label})")
-    print(f"  total:         {total:>5}")
+    print(f"  commits:       {c['totalCommitContributions']:>5}  (public)")
+    print(f"  issues:        {c['totalIssueContributions']:>5}  (public)")
+    print(f"  pull requests: {c['totalPullRequestContributions']:>5}  (public)")
+    print(f"  code review:   {reviews:>5}  ({pct:.2f}% of {denom_label} -- "
+          f"includes any private reviews)")
+    print(f"  private:       {restricted:>5}  (restricted, no type breakdown via API)")
+    print(f"  TOTAL:         {total:>5}  (widget denominator)")
 
 
 def main() -> int:
@@ -146,16 +201,23 @@ def main() -> int:
 
     _section(f"2. TRAILING {WINDOW_DAYS} DAYS  (matches profile activity-overview graph)")
     y = contributions_collection(username, year_start, now)
-    Y_total = graph_total(y)
+    Y_total = widget_denominator(y)
     Y_reviews = y["totalPullRequestReviewContributions"]
     _print_breakdown(y, "12mo")
     if Y_total:
-        graph_display = round(100 * Y_reviews / Y_total)
-        print(f"  graph displays code review at: {graph_display}%")
+        computed = round(100 * Y_reviews / Y_total)
+        print(f"  computed code-review %:        {computed}%")
+        widget = fetch_widget_percentages(username)
+        if widget is not None:
+            actual = widget.get("Code review")
+            label = "match" if actual == computed else f"DRIFT (widget {actual}%)"
+            print(f"  widget displays:               {actual}%  ({label})")
+        else:
+            print("  widget cross-check unavailable (HTML fetch failed)")
 
     _section(f"3. LAST {RECENT_DAYS} DAYS  (current pace)")
     m = contributions_collection(username, recent_start, now)
-    m_total = graph_total(m)
+    m_total = widget_denominator(m)
     m_reviews = m["totalPullRequestReviewContributions"]
     _print_breakdown(m, f"{RECENT_DAYS}d")
 
