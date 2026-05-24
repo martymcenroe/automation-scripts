@@ -25,7 +25,16 @@ this corrected, and AssemblyZero runbook 0937 for the canonical math).
 
 Stdlib + gh CLI only. Mirrors gh_daily_contributions.py.
 
-Issues: martymcenroe/automation-scripts#49 (original) + #51 (denominator fix)
+Invocation: `gh gh-reviews` (operator-local `gh` CLI alias). The alias
+name carries the `gh-` prefix to match the existing `gh-count` pattern;
+the visible invocation is therefore `gh gh-reviews`. See
+AssemblyZero/docs/runbooks/0936-gh-cli-aliases.md for the alias inventory
+and 0937-gh-cli-scripts.md for the script-side pattern + math.
+
+Issues: martymcenroe/automation-scripts#49 (original) + #51 (denominator
+fix) + #53 (this docstring -- explicit invocation documentation)
+Predecessor: martymcenroe/automation-scripts#42 (operator-filed spec
+this tool partially satisfies; remaining scope tracked there)
 Parent: martymcenroe/AssemblyZero#1244
 Math reference: martymcenroe/AssemblyZero/docs/runbooks/0937-gh-cli-scripts.md
 """
