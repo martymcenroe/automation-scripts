@@ -1,21 +1,15 @@
-"""GitHub code-review projection.
+"""GitHub code-review projection -- "how close am I to the 1% graph spoke."
 
-Reports current state of the operator's code-review fraction (the spoke on the
-GitHub profile activity-overview graph) and projects when the 12-month review
-percentage will cross the 0.5% rounding boundary that flips the displayed
-spoke from 0% to 1%.
+Reports the actionable wedge math:
+  - Where you are: 12mo review ratio vs the 0.5% rounding threshold
+  - What it takes TODAY: reviews-to-add to flip the displayed %, plus the
+    available fuel (open dependabot PRs across the fleet waiting to be reviewed)
+  - Will it stick: 30d pace check
+  - Do-nothing projection: days to cross at current organic pace
 
-Outputs:
-1. All-time review count (search/issues, no time bound).
-2. Trailing-12-month contribution breakdown -- matches the profile graph window.
-   Includes a cross-check against the widget's actual rendered data-percentages
-   so drift between this tool's math and GitHub's displayed value is visible.
-3. Last-30-day contribution rate (current pace).
-4. Projection to the 1%-spoke threshold under two models:
-   - Steady-state: if last-30-day pace is sustained, eventual 12-month
-     fraction = last_30d_reviews / last_30d_total.
-   - Optimistic: days until (R + r*d) / (T + t*d) crosses 0.5%, treating
-     the window as additive (ignoring sliding-window falloff).
+Default output is ~15 lines. `--verbose` re-enables the full contribution
+breakdowns, all-time review count, and widget cross-check block (useful for
+debugging the math but noisy for daily operational use).
 
 Denominator: contributionCalendar.totalContributions -- the all-types,
 all-restrictions count over the window. This matches what the GitHub widget
@@ -32,7 +26,7 @@ AssemblyZero/docs/runbooks/0936-gh-cli-aliases.md for the alias inventory
 and 0937-gh-cli-scripts.md for the script-side pattern + math.
 
 Issues: martymcenroe/automation-scripts#49 (original) + #51 (denominator
-fix) + #53 (this docstring -- explicit invocation documentation)
+fix) + #53 (docstring) + #57 (this streamlined layout + fleet fuel count).
 Predecessor: martymcenroe/automation-scripts#42 (operator-filed spec
 this tool partially satisfies; remaining scope tracked there)
 Parent: martymcenroe/AssemblyZero#1244
@@ -41,11 +35,13 @@ Math reference: martymcenroe/AssemblyZero/docs/runbooks/0937-gh-cli-scripts.md
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import subprocess
 import sys
 import urllib.request
+from collections import Counter
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -53,6 +49,7 @@ TZ = ZoneInfo("America/Chicago")
 TIP_FRACTION = 0.005  # rounding boundary that flips the graph spoke from 0% to 1%
 WINDOW_DAYS = 365
 RECENT_DAYS = 30
+TOP_N_FUEL_REPOS = 5
 
 WIDGET_FRAGMENT_URL = (
     "https://github.com/{user}"
@@ -155,6 +152,51 @@ def fetch_widget_percentages(username: str) -> dict | None:
         return None
 
 
+def reviews_to_flip(reviews: int, total: int) -> int:
+    """Min R such that (reviews + R) / (total + R) >= TIP_FRACTION.
+
+    Algebra: R * (1 - TIP) >= TIP*total - reviews
+    Returns 0 if already at/above threshold.
+    """
+    if total == 0:
+        return 0
+    needed = TIP_FRACTION * total - reviews
+    if needed <= 0:
+        return 0
+    r = needed / (1 - TIP_FRACTION)
+    # Ceiling: any fractional R means we need the next whole review
+    return int(r) + (0 if r == int(r) else 1)
+
+
+def fleet_open_dependabot_prs(username: str) -> tuple[int, Counter]:
+    """Count open dependabot PRs across all user-owned repos.
+
+    Single search call returns all PRs; group by repo for top-N reporting.
+    Returns (total_count, Counter[repo_name -> count]).
+
+    Note: search/issues q-param uses `+` between tokens, not spaces. gh's
+    URL handling is inconsistent enough that pre-encoding here is safer.
+    """
+    q = f"is:pr+is:open+user:{username}+author:app/dependabot"
+    try:
+        r = subprocess.run(
+            ["gh", "api", "--paginate",
+             f"search/issues?q={q}&per_page=100",
+             "--jq", ".items[] | .repository_url"],
+            capture_output=True, text=True, check=True, timeout=30,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return 0, Counter()
+    repos = Counter()
+    for line in r.stdout.strip().splitlines():
+        if not line:
+            continue
+        # repository_url is like https://api.github.com/repos/{user}/{repo}
+        repo = line.rstrip("/").split("/")[-1]
+        repos[repo] += 1
+    return sum(repos.values()), repos
+
+
 def project_optimistic_days(R: int, T: int, r: float, t: float) -> int | None:
     # Solve smallest d such that (R + r*d) / (T + t*d) >= TIP_FRACTION.
     # → d * (r - TIP*t) >= TIP*T - R
@@ -176,14 +218,13 @@ def fmt_days(days: int | None) -> str:
     return f"~{days} days (around {target.isoformat()})"
 
 
-def _section(title: str) -> None:
+def _hr(title: str) -> None:
     print()
-    print("=" * 70)
     print(title)
-    print("=" * 70)
+    print("-" * len(title))
 
 
-def _print_breakdown(c: dict, denom_label: str) -> None:
+def _print_full_breakdown(c: dict, denom_label: str) -> None:
     total = widget_denominator(c)
     restricted = c["restrictedContributionsCount"]
     reviews = c["totalPullRequestReviewContributions"]
@@ -197,72 +238,90 @@ def _print_breakdown(c: dict, denom_label: str) -> None:
     print(f"  TOTAL:         {total:>5}  (widget denominator)")
 
 
-def main() -> int:
+def main(verbose: bool = False) -> int:
     username = gh_user_login()
     now = datetime.now(TZ)
     year_start = now - timedelta(days=WINDOW_DAYS)
     recent_start = now - timedelta(days=RECENT_DAYS)
 
-    print(f"GitHub review-projection for @{username}  (as of {now.date().isoformat()})")
-
-    _section("1. ALL-TIME REVIEW COUNT")
-    print(f"  {all_time_review_count(username)}  unique PRs reviewed (no time bound)")
-
-    _section(f"2. TRAILING {WINDOW_DAYS} DAYS  (matches profile activity-overview graph)")
     y = contributions_collection(username, year_start, now)
     Y_total = widget_denominator(y)
     Y_reviews = y["totalPullRequestReviewContributions"]
-    _print_breakdown(y, "12mo")
-    if Y_total:
-        computed = round(100 * Y_reviews / Y_total)
-        print(f"  computed code-review %:        {computed}%")
-        widget = fetch_widget_percentages(username)
-        if widget is not None:
-            actual = widget.get("Code review")
-            label = "match" if actual == computed else f"DRIFT (widget {actual}%)"
-            print(f"  widget displays:               {actual}%  ({label})")
-        else:
-            print("  widget cross-check unavailable (HTML fetch failed)")
 
-    _section(f"3. LAST {RECENT_DAYS} DAYS  (current pace)")
     m = contributions_collection(username, recent_start, now)
     m_total = widget_denominator(m)
     m_reviews = m["totalPullRequestReviewContributions"]
-    _print_breakdown(m, f"{RECENT_DAYS}d")
 
-    _section("4. PROJECTION TO 1% GRAPH SPOKE  (threshold: cumulative fraction >= 0.5%)")
-    if Y_total == 0:
+    print(f"GitHub review-projection for @{username}  ({now.date().isoformat()})")
+
+    _hr("WHERE YOU ARE")
+    if Y_total:
+        ratio = 100 * Y_reviews / Y_total
+        displayed = round(ratio)
+        print(f"  12-month ratio:  {Y_reviews} reviews / {Y_total:,} total = {ratio:.2f}%  ->  graph: {displayed}%")
+        widget = fetch_widget_percentages(username) if verbose else None
+        if verbose and widget is not None:
+            actual = widget.get("Code review")
+            tag = "match" if actual == displayed else f"DRIFT (widget shows {actual}%)"
+            print(f"  widget cross-check: {actual}%  ({tag})")
+    else:
         print("  No 12-month contributions yet -- cannot project.")
         return 0
+    print(f"  Threshold:       >= {100*TIP_FRACTION:.2f}% to display 1%")
 
-    current_pct = 100 * Y_reviews / Y_total
-    if current_pct >= 100 * TIP_FRACTION:
-        print(f"  Already at threshold -- 12-month review fraction is {current_pct:.2f}%.")
-        return 0
+    _hr("WHAT IT TAKES TODAY")
+    r_needed = reviews_to_flip(Y_reviews, Y_total)
+    if r_needed == 0:
+        print(f"  Already at/above threshold ({ratio:.2f}%). Nothing required today.")
+    else:
+        print(f"  Reviews to add:  {r_needed}   (instantly flips the displayed % from 0 to 1)")
+    fuel_total, fuel_by_repo = fleet_open_dependabot_prs(username)
+    print(f"  Fuel available:  {fuel_total} open dependabot PRs across {len(fuel_by_repo)} repos")
+    if fuel_total:
+        for repo, count in fuel_by_repo.most_common(TOP_N_FUEL_REPOS):
+            print(f"                   {repo:<35} {count}")
+        if len(fuel_by_repo) > TOP_N_FUEL_REPOS:
+            print(f"                   ... +{len(fuel_by_repo) - TOP_N_FUEL_REPOS} more repos")
+    print("  Harvest path:    Start-ScheduledTask Claude-DependabotFleet  (or manual review)")
 
+    _hr("WILL IT STICK")
+    if m_total:
+        m_ratio = 100 * m_reviews / m_total
+        print(f"  Last-{RECENT_DAYS}d pace:   {m_reviews} reviews / {m_total:,} total = {m_ratio:.2f}%")
+        threshold_pct = 100 * TIP_FRACTION
+        if m_ratio >= threshold_pct:
+            print(f"  Verdict:         YES -- sustained above {threshold_pct:.2f}% at current pace")
+        else:
+            gap = threshold_pct - m_ratio
+            print(f"  Verdict:         NO -- short by {gap:.2f}pp; flip will decay back below threshold")
+    else:
+        print(f"  No activity in last {RECENT_DAYS} days; cannot assess pace.")
+
+    _hr("DO-NOTHING PROJECTION")
     r_per_day = m_reviews / RECENT_DAYS
     t_per_day = m_total / RECENT_DAYS
-    print(f"  Last-{RECENT_DAYS}-day review rate: {r_per_day:.2f}/day")
-    print(f"  Last-{RECENT_DAYS}-day total rate:  {t_per_day:.2f}/day")
-
-    if t_per_day > 0:
-        eventual = 100 * r_per_day / t_per_day
-        print(f"  Steady-state 12-month fraction at current pace: {eventual:.2f}%")
-        if eventual < 100 * TIP_FRACTION:
-            gap = 100 * TIP_FRACTION - eventual
-            print(f"  Current pace WILL NOT tip the spoke "
-                  f"(short by {gap:.2f} percentage points).")
-            print("  Either increase review velocity or decrease other contribution rate.")
-        else:
-            print("  Current pace WILL tip the spoke if sustained.")
-
     days = project_optimistic_days(Y_reviews, Y_total, r_per_day, t_per_day)
-    print(f"  Optimistic days to threshold (no falloff): {fmt_days(days)}")
-    print(f"  Caveat: optimistic model ignores the {WINDOW_DAYS}-day sliding-window")
-    print("  falloff. Real date depends on the historical distribution.")
+    print(f"  At current {r_per_day:.2f} reviews/day pace: cross threshold {fmt_days(days)}")
+    print(f"  (Optimistic model -- ignores {WINDOW_DAYS}-day sliding-window falloff.)")
+
+    if verbose:
+        _hr("VERBOSE: ALL-TIME + PER-WINDOW BREAKDOWN")
+        print(f"  all-time reviews:  {all_time_review_count(username)} unique PRs reviewed")
+        print()
+        print(f"  Trailing {WINDOW_DAYS} days:")
+        _print_full_breakdown(y, "12mo")
+        print()
+        print(f"  Last {RECENT_DAYS} days:")
+        _print_full_breakdown(m, f"{RECENT_DAYS}d")
 
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--verbose", "-v", action="store_true",
+        help="show all-time count, full per-window contribution breakdowns, and widget cross-check",
+    )
+    args = parser.parse_args()
+    sys.exit(main(verbose=args.verbose))
