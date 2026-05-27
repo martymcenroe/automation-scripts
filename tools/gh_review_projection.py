@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import subprocess
 import sys
@@ -280,6 +281,14 @@ def main(verbose: bool = False) -> int:
     actual_pct = 100 * reviews_display / Y_total if Y_total else 0
     print(f"12-MONTH   ~{reviews_display} reviews / {Y_total:,} total = {actual_pct:.2f}% "
           f"(graph {displayed}%, {state_tag})")
+    # Honest range: the widget reports an INTEGER percent, so the actual review
+    # count is anywhere in the band that rounds to that integer. The ~N number
+    # above is the midpoint estimate; this line shows the true uncertainty.
+    if widget_pct is not None and Y_total:
+        lower = max(0, math.ceil((widget_pct - 0.5) / 100 * Y_total))
+        upper = math.floor((widget_pct + 0.5) / 100 * Y_total)
+        print(f"           honest range: {lower}-{upper} reviews "
+              f"(widget shows integer % only; exact count not exposed by API)")
 
     # TODAY
     print(f"TODAY      {shipped_today} merged")
