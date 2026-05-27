@@ -246,15 +246,17 @@ def main(verbose: bool = False) -> int:
     widget = fetch_widget_percentages(username)
     widget_pct = widget.get("Code review") if widget else None
 
-    if widget_pct is not None and Y_total:
+    if widget_pct is not None and widget_pct > 0 and Y_total:
         Y_reviews_effective = widget_pct / 100 * Y_total
         displayed = widget_pct
         widget_source = "live activity-overview widget"
     elif Y_total:
-        api_ratio = 100 * Y_reviews_api / Y_total
-        displayed = round(api_ratio)
+        # Widget fetch failed OR widget shows 0% (rounds-to-zero means actual is in
+        # [0, 0.5%) -- use API approves as a known lower bound for the count).
         Y_reviews_effective = Y_reviews_api
-        widget_source = "API fallback (widget fetch failed)"
+        displayed = widget_pct if widget_pct is not None else round(100 * Y_reviews_api / Y_total)
+        widget_source = ("widget 0% — API count used as lower bound"
+                         if widget_pct == 0 else "API fallback (widget fetch failed)")
     else:
         print(f"GitHub review-projection for @{username} ({now.date().isoformat()} Central)")
         print("No 12-month contributions yet — cannot project.")
@@ -271,10 +273,18 @@ def main(verbose: bool = False) -> int:
     print(f"GitHub review-projection for @{username} ({now.date().isoformat()} Central)")
     print()
 
+    # 12-MONTH: cumulative review events + ratio (the load-bearing number).
     state_tag = (f"above {threshold_pct:.2f}% threshold" if threshold_met
                  else f"below {threshold_pct:.2f}% threshold")
-    print(f"TODAY      {shipped_today} merged | ratio {displayed}% ({state_tag})")
+    reviews_display = round(Y_reviews_effective)
+    actual_pct = 100 * reviews_display / Y_total if Y_total else 0
+    print(f"12-MONTH   ~{reviews_display} reviews / {Y_total:,} total = {actual_pct:.2f}% "
+          f"(graph {displayed}%, {state_tag})")
 
+    # TODAY
+    print(f"TODAY      {shipped_today} merged")
+
+    # BACKLOG
     top = fuel_by_repo.most_common(3)
     top_str = ", ".join(f"{repo} {count}" for repo, count in top)
     more = max(0, len(fuel_by_repo) - 3)
@@ -282,6 +292,23 @@ def main(verbose: bool = False) -> int:
     detail = f" ({top_str}{tail})" if top else ""
     print(f"BACKLOG    {fuel_total} open dependabot PRs{detail}")
 
+    # IF DRAINED: project ratio after harvesting the backlog. Each PR generates
+    # one review event (approve OR comment), which adds to both numerator and
+    # denominator.
+    if fuel_total > 0:
+        drained_reviews_float = Y_reviews_effective + fuel_total
+        drained_total = Y_total + fuel_total
+        drained_pct = 100 * drained_reviews_float / drained_total
+        drained_graph = round(drained_pct)
+        if not threshold_met and drained_graph >= 1:
+            change_tag = "— flips graph to 1%"
+        elif drained_graph != displayed:
+            change_tag = f"(graph would round to {drained_graph}%)"
+        else:
+            change_tag = f"(graph stays at {displayed}%)"
+        print(f"IF DRAINED ~{round(drained_reviews_float)} / {drained_total:,} = {drained_pct:.2f}% {change_tag}")
+
+    # ACTION
     if threshold_met:
         print(f"ACTION     Optional drain (banks events for tomorrow)")
     else:
