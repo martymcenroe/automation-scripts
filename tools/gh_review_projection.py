@@ -1,15 +1,16 @@
 """GitHub code-review projection -- "how close am I to the 1% graph spoke."
 
-Reports the actionable wedge math:
-  - Where you are: 12mo review ratio vs the 0.5% rounding threshold
-  - What it takes TODAY: reviews-to-add to flip the displayed %, plus the
-    available fuel (open dependabot PRs across the fleet waiting to be reviewed)
-  - Will it stick: 30d pace check
-  - Do-nothing projection: days to cross at current organic pace
+Default output is three load-bearing lines + a command:
 
-Default output is ~15 lines. `--verbose` re-enables the full contribution
-breakdowns, all-time review count, and widget cross-check block (useful for
-debugging the math but noisy for daily operational use).
+    TODAY      N merged · ratio X% (above/below 0.50% threshold)
+    BACKLOG    M open dependabot PRs (top-3 repos, +K more)
+    ACTION     DRAIN NOW (below) | Optional drain (above)
+               -> Start-ScheduledTask -TaskName 'Claude-DependabotFleet'
+
+`--verbose` adds a DETAIL block with the per-window math, widget/API scale,
+all-time count, and full backlog breakdown. See automation-scripts#62 for
+the redesign rationale (the previous WHERE YOU ARE / WHAT IT TAKES /
+WILL IT STICK / DO-NOTHING layout was contradictory and not actionable).
 
 Denominator: contributionCalendar.totalContributions -- the all-types,
 all-restrictions count over the window. This matches what the GitHub widget
@@ -159,20 +160,24 @@ def fetch_widget_percentages(username: str) -> dict | None:
         return None
 
 
-def reviews_to_flip(reviews: int, total: int) -> int:
-    """Min R such that (reviews + R) / (total + R) >= TIP_FRACTION.
-
-    Algebra: R * (1 - TIP) >= TIP*total - reviews
-    Returns 0 if already at/above threshold.
-    """
-    if total == 0:
+def todays_shipped(username: str) -> int:
+    """Count dependabot PRs merged today (US Central) across user-owned repos."""
+    today_central = datetime.now(TZ).strftime("%Y-%m-%d")
+    try:
+        r = subprocess.run(
+            ["gh", "search", "prs",
+             "--author", "app/dependabot",
+             "--owner", username,
+             "--merged",
+             "--closed", f">={today_central}",
+             "--limit", "200",
+             "--json", "number",
+             "--jq", "length"],
+            capture_output=True, text=True, check=True, timeout=30,
+        )
+        return int(r.stdout.strip())
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError):
         return 0
-    needed = TIP_FRACTION * total - reviews
-    if needed <= 0:
-        return 0
-    r = needed / (1 - TIP_FRACTION)
-    # Ceiling: any fractional R means we need the next whole review
-    return int(r) + (0 if r == int(r) else 1)
 
 
 def fleet_open_dependabot_prs(username: str) -> tuple[int, Counter]:
@@ -202,27 +207,6 @@ def fleet_open_dependabot_prs(username: str) -> tuple[int, Counter]:
         repo = line.rstrip("/").split("/")[-1]
         repos[repo] += 1
     return sum(repos.values()), repos
-
-
-def project_optimistic_days(R: int, T: int, r: float, t: float) -> int | None:
-    # Solve smallest d such that (R + r*d) / (T + t*d) >= TIP_FRACTION.
-    # → d * (r - TIP*t) >= TIP*T - R
-    numer = TIP_FRACTION * T - R
-    if numer <= 0:
-        return 0
-    denom = r - TIP_FRACTION * t
-    if denom <= 0:
-        return None
-    return int(numer / denom) + 1
-
-
-def fmt_days(days: int | None) -> str:
-    if days is None:
-        return "never (rate too low to overcome dilution)"
-    if days == 0:
-        return "already at or above threshold"
-    target = (datetime.now(TZ) + timedelta(days=days)).date()
-    return f"~{days} days (around {target.isoformat()})"
 
 
 def _hr(title: str) -> None:
@@ -259,99 +243,69 @@ def main(verbose: bool = False) -> int:
     m_total = widget_denominator(m)
     m_reviews_api = m["totalPullRequestReviewContributions"]
 
-    # Truth source: the activity-overview widget. The GraphQL field
-    # totalPullRequestReviewContributions empirically counts only a SUBSET of
-    # reviews (approves on closed PRs); the contribution graph counts every
-    # review submission including COMMENTED on open PRs. The widget HTML
-    # exposes the authoritative per-category percentages via the
-    # data-percentages attribute. Fetch it and use it as the source of truth;
-    # fall back to API-only math only if the fetch fails. See #60.
     widget = fetch_widget_percentages(username)
     widget_pct = widget.get("Code review") if widget else None
 
-    print(f"GitHub review-projection for @{username}  ({now.date().isoformat()})")
-
-    _hr("WHERE YOU ARE")
     if widget_pct is not None and Y_total:
-        # Widget reports integer percent; implied review count = pct% of denom.
         Y_reviews_effective = widget_pct / 100 * Y_total
         displayed = widget_pct
-        print(f"  12-month graph:  {widget_pct}% Code review  (live activity-overview widget)")
-        print(f"  Implied reviews: ~{int(Y_reviews_effective)} of {Y_total:,} total contributions")
-        if Y_reviews_api < Y_reviews_effective:
-            print(f"  API lower bound: {Y_reviews_api} (approves-only; widget also counts comments + change-requests)")
-        threshold_met = widget_pct >= 1
+        widget_source = "live activity-overview widget"
     elif Y_total:
         api_ratio = 100 * Y_reviews_api / Y_total
         displayed = round(api_ratio)
-        print(f"  12-month ratio:  {Y_reviews_api} reviews / {Y_total:,} total = {api_ratio:.2f}%  ->  graph: {displayed}%")
-        print(f"  (Widget fetch failed; using API approves-only count as fallback.)")
-        threshold_met = api_ratio >= 100 * TIP_FRACTION
         Y_reviews_effective = Y_reviews_api
+        widget_source = "API fallback (widget fetch failed)"
     else:
-        print("  No 12-month contributions yet -- cannot project.")
+        print(f"GitHub review-projection for @{username} ({now.date().isoformat()} Central)")
+        print("No 12-month contributions yet — cannot project.")
         return 0
-    print(f"  Threshold:       >= {100*TIP_FRACTION:.2f}% to display 1%")
 
-    _hr("WHAT IT TAKES TODAY")
-    if threshold_met:
-        print(f"  Already at the 1% spoke ({displayed}%). Nothing required today.")
-    else:
-        r_needed = reviews_to_flip(int(Y_reviews_effective), Y_total)
-        print(f"  Reviews to add:  ~{r_needed}   (flips the displayed % from 0 to 1)")
+    threshold_met = displayed >= 1
+    threshold_pct = 100 * TIP_FRACTION
+    widget_scale = (Y_reviews_effective / Y_reviews_api
+                    if Y_reviews_api > 0 and Y_reviews_effective > Y_reviews_api else 1.0)
+
+    shipped_today = todays_shipped(username)
     fuel_total, fuel_by_repo = fleet_open_dependabot_prs(username)
-    print(f"  Fuel available:  {fuel_total} open dependabot PRs across {len(fuel_by_repo)} repos")
-    if fuel_total:
-        for repo, count in fuel_by_repo.most_common(TOP_N_FUEL_REPOS):
-            print(f"                   {repo:<35} {count}")
-        if len(fuel_by_repo) > TOP_N_FUEL_REPOS:
-            print(f"                   ... +{len(fuel_by_repo) - TOP_N_FUEL_REPOS} more repos")
-    print("  Harvest path:    Start-ScheduledTask Claude-DependabotFleet  (or manual review)")
 
-    # Scale 30d-window API counts by the widget/API factor observed at 12mo,
-    # since the API undercount is structural (commented reviews never count).
-    if widget_pct is not None and Y_reviews_api > 0 and Y_reviews_effective > Y_reviews_api:
-        widget_scale = Y_reviews_effective / Y_reviews_api
-    else:
-        widget_scale = 1.0
+    print(f"GitHub review-projection for @{username} ({now.date().isoformat()} Central)")
+    print()
 
-    _hr("WILL IT STICK")
-    if m_total:
-        m_reviews_effective = m_reviews_api * widget_scale
-        m_ratio = 100 * m_reviews_effective / m_total
-        if widget_scale > 1.0:
-            print(f"  Last-{RECENT_DAYS}d pace:   ~{int(m_reviews_effective)} reviews / {m_total:,} total = {m_ratio:.2f}%  ({widget_scale:.1f}x widget/API scale)")
-        else:
-            print(f"  Last-{RECENT_DAYS}d pace:   {m_reviews_api} reviews / {m_total:,} total = {m_ratio:.2f}%")
-        threshold_pct = 100 * TIP_FRACTION
-        if m_ratio >= threshold_pct:
-            print(f"  Verdict:         YES -- sustained above {threshold_pct:.2f}% at current pace")
-        else:
-            gap = threshold_pct - m_ratio
-            print(f"  Verdict:         NO -- short by {gap:.2f}pp; flip will decay back below threshold")
-    else:
-        print(f"  No activity in last {RECENT_DAYS} days; cannot assess pace.")
+    state_tag = (f"above {threshold_pct:.2f}% threshold" if threshold_met
+                 else f"below {threshold_pct:.2f}% threshold")
+    print(f"TODAY      {shipped_today} merged | ratio {displayed}% ({state_tag})")
 
-    _hr("DO-NOTHING PROJECTION")
+    top = fuel_by_repo.most_common(3)
+    top_str = ", ".join(f"{repo} {count}" for repo, count in top)
+    more = max(0, len(fuel_by_repo) - 3)
+    tail = f", +{more} more" if more > 0 else ""
+    detail = f" ({top_str}{tail})" if top else ""
+    print(f"BACKLOG    {fuel_total} open dependabot PRs{detail}")
+
     if threshold_met:
-        print("  Already at threshold; projection N/A unless ratio decays below 0.50%.")
+        print(f"ACTION     Optional drain (banks events for tomorrow)")
     else:
-        r_per_day = (m_reviews_api * widget_scale) / RECENT_DAYS
-        t_per_day = m_total / RECENT_DAYS
-        days = project_optimistic_days(Y_reviews_effective, Y_total, r_per_day, t_per_day)
-        print(f"  At current {r_per_day:.2f} reviews/day pace: cross threshold {fmt_days(days)}")
-        print(f"  (Optimistic model -- ignores {WINDOW_DAYS}-day sliding-window falloff.)")
+        print(f"ACTION     DRAIN NOW to flip ratio")
+    print(f"           -> Start-ScheduledTask -TaskName 'Claude-DependabotFleet'")
 
     if verbose:
-        _hr("VERBOSE: ALL-TIME + PER-WINDOW BREAKDOWN")
-        print(f"  all-time reviews:  {all_time_review_count(username)} unique PRs reviewed")
-        print(f"  widget scale (widget/API): {widget_scale:.2f}x")
+        _hr("DETAIL")
+        print(f"  Ratio source: {widget_source}")
+        print(f"  Year ({WINDOW_DAYS}d):  {Y_reviews_api} API approves, "
+              f"~{int(Y_reviews_effective)} widget-implied of {Y_total:,} total = {displayed}%")
+        if m_total:
+            m_scaled = m_reviews_api * widget_scale
+            m_ratio_scaled = 100 * m_scaled / m_total
+            print(f"  30d window:    {m_reviews_api} API approves, "
+                  f"~{int(m_scaled)} scaled of {m_total:,} = {m_ratio_scaled:.2f}%")
+        print(f"  Widget/API:    {widget_scale:.2f}x (API approves-only; widget counts comments)")
+        print(f"  All-time:      {all_time_review_count(username)} unique PRs reviewed")
         print()
-        print(f"  Trailing {WINDOW_DAYS} days:")
-        _print_full_breakdown(y, "12mo")
-        print()
-        print(f"  Last {RECENT_DAYS} days:")
-        _print_full_breakdown(m, f"{RECENT_DAYS}d")
+        print("  Backlog by repo:")
+        for repo, count in fuel_by_repo.most_common(TOP_N_FUEL_REPOS):
+            print(f"    {repo:<35} {count}")
+        if len(fuel_by_repo) > TOP_N_FUEL_REPOS:
+            print(f"    ... +{len(fuel_by_repo) - TOP_N_FUEL_REPOS} more repos")
 
     return 0
 
