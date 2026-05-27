@@ -17,6 +17,13 @@ uses; summing the four public spoke values understates the denominator by
 excluding private contributions (see automation-scripts#51 for the bug
 this corrected, and AssemblyZero runbook 0937 for the canonical math).
 
+Numerator: scraped from the activity-overview widget's data-percentages
+attribute (`Code review` field) when available. The GraphQL
+totalPullRequestReviewContributions field empirically counts only a subset
+of reviews (approves on closed PRs); the widget counts every review
+submission including COMMENTED on open PRs, which is what GitHub's
+displayed graph spoke reflects. See automation-scripts#60.
+
 Stdlib + gh CLI only. Mirrors gh_daily_contributions.py.
 
 Invocation: `gh gh-reviews` (operator-local `gh` CLI alias). The alias
@@ -233,7 +240,7 @@ def _print_full_breakdown(c: dict, denom_label: str) -> None:
     print(f"  issues:        {c['totalIssueContributions']:>5}  (public)")
     print(f"  pull requests: {c['totalPullRequestContributions']:>5}  (public)")
     print(f"  code review:   {reviews:>5}  ({pct:.2f}% of {denom_label} -- "
-          f"includes any private reviews)")
+          f"API approves-only lower bound; widget counts more)")
     print(f"  private:       {restricted:>5}  (restricted, no type breakdown via API)")
     print(f"  TOTAL:         {total:>5}  (widget denominator)")
 
@@ -246,35 +253,52 @@ def main(verbose: bool = False) -> int:
 
     y = contributions_collection(username, year_start, now)
     Y_total = widget_denominator(y)
-    Y_reviews = y["totalPullRequestReviewContributions"]
+    Y_reviews_api = y["totalPullRequestReviewContributions"]
 
     m = contributions_collection(username, recent_start, now)
     m_total = widget_denominator(m)
-    m_reviews = m["totalPullRequestReviewContributions"]
+    m_reviews_api = m["totalPullRequestReviewContributions"]
+
+    # Truth source: the activity-overview widget. The GraphQL field
+    # totalPullRequestReviewContributions empirically counts only a SUBSET of
+    # reviews (approves on closed PRs); the contribution graph counts every
+    # review submission including COMMENTED on open PRs. The widget HTML
+    # exposes the authoritative per-category percentages via the
+    # data-percentages attribute. Fetch it and use it as the source of truth;
+    # fall back to API-only math only if the fetch fails. See #60.
+    widget = fetch_widget_percentages(username)
+    widget_pct = widget.get("Code review") if widget else None
 
     print(f"GitHub review-projection for @{username}  ({now.date().isoformat()})")
 
     _hr("WHERE YOU ARE")
-    if Y_total:
-        ratio = 100 * Y_reviews / Y_total
-        displayed = round(ratio)
-        print(f"  12-month ratio:  {Y_reviews} reviews / {Y_total:,} total = {ratio:.2f}%  ->  graph: {displayed}%")
-        widget = fetch_widget_percentages(username) if verbose else None
-        if verbose and widget is not None:
-            actual = widget.get("Code review")
-            tag = "match" if actual == displayed else f"DRIFT (widget shows {actual}%)"
-            print(f"  widget cross-check: {actual}%  ({tag})")
+    if widget_pct is not None and Y_total:
+        # Widget reports integer percent; implied review count = pct% of denom.
+        Y_reviews_effective = widget_pct / 100 * Y_total
+        displayed = widget_pct
+        print(f"  12-month graph:  {widget_pct}% Code review  (live activity-overview widget)")
+        print(f"  Implied reviews: ~{int(Y_reviews_effective)} of {Y_total:,} total contributions")
+        if Y_reviews_api < Y_reviews_effective:
+            print(f"  API lower bound: {Y_reviews_api} (approves-only; widget also counts comments + change-requests)")
+        threshold_met = widget_pct >= 1
+    elif Y_total:
+        api_ratio = 100 * Y_reviews_api / Y_total
+        displayed = round(api_ratio)
+        print(f"  12-month ratio:  {Y_reviews_api} reviews / {Y_total:,} total = {api_ratio:.2f}%  ->  graph: {displayed}%")
+        print(f"  (Widget fetch failed; using API approves-only count as fallback.)")
+        threshold_met = api_ratio >= 100 * TIP_FRACTION
+        Y_reviews_effective = Y_reviews_api
     else:
         print("  No 12-month contributions yet -- cannot project.")
         return 0
     print(f"  Threshold:       >= {100*TIP_FRACTION:.2f}% to display 1%")
 
     _hr("WHAT IT TAKES TODAY")
-    r_needed = reviews_to_flip(Y_reviews, Y_total)
-    if r_needed == 0:
-        print(f"  Already at/above threshold ({ratio:.2f}%). Nothing required today.")
+    if threshold_met:
+        print(f"  Already at the 1% spoke ({displayed}%). Nothing required today.")
     else:
-        print(f"  Reviews to add:  {r_needed}   (instantly flips the displayed % from 0 to 1)")
+        r_needed = reviews_to_flip(int(Y_reviews_effective), Y_total)
+        print(f"  Reviews to add:  ~{r_needed}   (flips the displayed % from 0 to 1)")
     fuel_total, fuel_by_repo = fleet_open_dependabot_prs(username)
     print(f"  Fuel available:  {fuel_total} open dependabot PRs across {len(fuel_by_repo)} repos")
     if fuel_total:
@@ -284,10 +308,21 @@ def main(verbose: bool = False) -> int:
             print(f"                   ... +{len(fuel_by_repo) - TOP_N_FUEL_REPOS} more repos")
     print("  Harvest path:    Start-ScheduledTask Claude-DependabotFleet  (or manual review)")
 
+    # Scale 30d-window API counts by the widget/API factor observed at 12mo,
+    # since the API undercount is structural (commented reviews never count).
+    if widget_pct is not None and Y_reviews_api > 0 and Y_reviews_effective > Y_reviews_api:
+        widget_scale = Y_reviews_effective / Y_reviews_api
+    else:
+        widget_scale = 1.0
+
     _hr("WILL IT STICK")
     if m_total:
-        m_ratio = 100 * m_reviews / m_total
-        print(f"  Last-{RECENT_DAYS}d pace:   {m_reviews} reviews / {m_total:,} total = {m_ratio:.2f}%")
+        m_reviews_effective = m_reviews_api * widget_scale
+        m_ratio = 100 * m_reviews_effective / m_total
+        if widget_scale > 1.0:
+            print(f"  Last-{RECENT_DAYS}d pace:   ~{int(m_reviews_effective)} reviews / {m_total:,} total = {m_ratio:.2f}%  ({widget_scale:.1f}x widget/API scale)")
+        else:
+            print(f"  Last-{RECENT_DAYS}d pace:   {m_reviews_api} reviews / {m_total:,} total = {m_ratio:.2f}%")
         threshold_pct = 100 * TIP_FRACTION
         if m_ratio >= threshold_pct:
             print(f"  Verdict:         YES -- sustained above {threshold_pct:.2f}% at current pace")
@@ -298,15 +333,19 @@ def main(verbose: bool = False) -> int:
         print(f"  No activity in last {RECENT_DAYS} days; cannot assess pace.")
 
     _hr("DO-NOTHING PROJECTION")
-    r_per_day = m_reviews / RECENT_DAYS
-    t_per_day = m_total / RECENT_DAYS
-    days = project_optimistic_days(Y_reviews, Y_total, r_per_day, t_per_day)
-    print(f"  At current {r_per_day:.2f} reviews/day pace: cross threshold {fmt_days(days)}")
-    print(f"  (Optimistic model -- ignores {WINDOW_DAYS}-day sliding-window falloff.)")
+    if threshold_met:
+        print("  Already at threshold; projection N/A unless ratio decays below 0.50%.")
+    else:
+        r_per_day = (m_reviews_api * widget_scale) / RECENT_DAYS
+        t_per_day = m_total / RECENT_DAYS
+        days = project_optimistic_days(Y_reviews_effective, Y_total, r_per_day, t_per_day)
+        print(f"  At current {r_per_day:.2f} reviews/day pace: cross threshold {fmt_days(days)}")
+        print(f"  (Optimistic model -- ignores {WINDOW_DAYS}-day sliding-window falloff.)")
 
     if verbose:
         _hr("VERBOSE: ALL-TIME + PER-WINDOW BREAKDOWN")
         print(f"  all-time reviews:  {all_time_review_count(username)} unique PRs reviewed")
+        print(f"  widget scale (widget/API): {widget_scale:.2f}x")
         print()
         print(f"  Trailing {WINDOW_DAYS} days:")
         _print_full_breakdown(y, "12mo")
