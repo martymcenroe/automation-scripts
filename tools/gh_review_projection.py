@@ -51,10 +51,13 @@ import subprocess
 import sys
 import urllib.request
 from collections import Counter
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, timezone
 
-TZ = ZoneInfo("America/Chicago")
+# No ZoneInfo / named timezone: Windows Python has no IANA tz database
+# (needs the `tzdata` package, which crashed `gh gh-reviews` when absent).
+# The machine clock is already US Central, so datetime.now().astimezone()
+# yields Central-aware local time and timezone.utc (a fixed offset, always
+# in stdlib) covers the UTC conversions -- no tz database required.
 TIP_FRACTION = 0.005  # rounding boundary that flips the graph spoke from 0% to 1%
 WINDOW_DAYS = 365
 RECENT_DAYS = 30
@@ -103,8 +106,8 @@ def all_time_review_count(username: str) -> int:
 
 
 def contributions_collection(username: str, frm: datetime, to: datetime) -> dict:
-    utc_from = frm.astimezone(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%SZ")
-    utc_to = to.astimezone(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%SZ")
+    utc_from = frm.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    utc_to = to.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     r = subprocess.run(
         ["gh", "api", "graphql",
          "-f", f"query={GRAPHQL_QUERY}",
@@ -163,7 +166,7 @@ def fetch_widget_percentages(username: str) -> dict | None:
 
 def todays_shipped(username: str) -> int:
     """Count dependabot PRs merged today (US Central) across user-owned repos."""
-    today_central = datetime.now(TZ).strftime("%Y-%m-%d")
+    today_central = datetime.now().astimezone().strftime("%Y-%m-%d")
     try:
         r = subprocess.run(
             ["gh", "search", "prs",
@@ -232,7 +235,7 @@ def _print_full_breakdown(c: dict, denom_label: str) -> None:
 
 def main(verbose: bool = False) -> int:
     username = gh_user_login()
-    now = datetime.now(TZ)
+    now = datetime.now().astimezone()
     year_start = now - timedelta(days=WINDOW_DAYS)
     recent_start = now - timedelta(days=RECENT_DAYS)
 
