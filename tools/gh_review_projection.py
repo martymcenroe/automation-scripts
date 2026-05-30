@@ -262,7 +262,7 @@ def main(verbose: bool = False) -> int:
         widget_source = ("widget 0% — API count used as lower bound"
                          if widget_pct == 0 else "API fallback (widget fetch failed)")
     else:
-        print(f"GitHub review-projection for @{username} ({now.date().isoformat()} Central)")
+        print(f"GitHub review-projection for @{username} ({now.strftime('%Y-%m-%d %H:%M:%S')} Central)")
         print("No 12-month contributions yet — cannot project.")
         return 0
 
@@ -274,7 +274,7 @@ def main(verbose: bool = False) -> int:
     shipped_today = todays_shipped(username)
     fuel_total, fuel_by_repo = fleet_open_dependabot_prs(username)
 
-    print(f"GitHub review-projection for @{username} ({now.date().isoformat()} Central)")
+    print(f"GitHub review-projection for @{username} ({now.strftime('%Y-%m-%d %H:%M:%S')} Central)")
     print()
 
     # 12-MONTH: cumulative review events + ratio (the load-bearing number).
